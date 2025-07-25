@@ -1,0 +1,25 @@
+# 编译输出目录
+target/
+
+# 临时文件
+tmp/
+temp/
+
+# IDE 配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Cargo 相关
+Cargo.lock
+# 如果你是库项目，通常会忽略 Cargo.lock；如果是二进制项目则保留
+
+# 环境变量和密钥
+.env
+.env.*
+!.env.example  # 可以保留示例环境文件
+
+# 操作系统相关
+.DS_Store
+Thumbs.db
