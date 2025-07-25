@@ -254,12 +254,18 @@ extern fdb_err_t _fdb_file_write(fdb_db_t db, uint32_t addr, const void *buf, si
 extern fdb_err_t _fdb_file_erase(fdb_db_t db, uint32_t addr, size_t size);
 #endif /* FDB_USING_FILE_LIBC */
 
+#ifdef FDB_USING_CUSTOM_MODE
+extern fdb_err_t fdb_custom_read(fdb_db_t db, uint32_t addr, void *buf, size_t size);
+extern fdb_err_t fdb_custom_write(fdb_db_t db, uint32_t addr, const void *buf, size_t size, bool sync);
+extern fdb_err_t fdb_custom_erase(fdb_db_t db, uint32_t addr, size_t size);
+#endif
+
 fdb_err_t _fdb_flash_read(fdb_db_t db, uint32_t addr, void *buf, size_t size)
 {
     switch (db->mode) {
 #if defined(FDB_USING_CUSTOM_MODE)
         case FDB_STORAGE_CUSTOM:
-            return db->storage.custom.read(db->user_data, addr, buf, size);
+            return fdb_custom_read(db, addr, buf, size);
 #endif
 #if defined(FDB_USING_FILE_MODE)
         case FDB_STORAGE_FILE:
@@ -282,7 +288,7 @@ fdb_err_t _fdb_flash_erase(fdb_db_t db, uint32_t addr, size_t size)
     switch (db->mode) {
 #if defined(FDB_USING_CUSTOM_MODE)
         case FDB_STORAGE_CUSTOM:
-            return db->storage.custom.erase(db->user_data, addr, size);
+            return fdb_custom_erase(db, addr, size);
 #endif
 #if defined(FDB_USING_FILE_MODE)
         case FDB_STORAGE_FILE:
@@ -305,7 +311,7 @@ fdb_err_t _fdb_flash_write(fdb_db_t db, uint32_t addr, const void *buf, size_t s
     switch (db->mode) {
 #if defined(FDB_USING_CUSTOM_MODE)
         case FDB_STORAGE_CUSTOM:
-            return db->storage.custom.write(db->user_data, addr, buf, size, sync);
+            return fdb_custom_write(db, addr, buf, size, sync);
 #endif
 #if defined(FDB_USING_FILE_MODE)
         case FDB_STORAGE_FILE:

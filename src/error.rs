@@ -35,6 +35,10 @@ pub enum Error {
     KeyNotFound,
     #[error("Locking error: {0}")]
     LockingError(String),
+
+    #[cfg(feature = "std")]
+    #[error("IO error: {0}")]
+    IO(std::io::Error),
 }
 
 impl Error {
@@ -79,6 +83,13 @@ impl From<fdb_err_t> for Error {
     }
 }
 
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Self::IO(err)
+    }
+}
+
 impl embedded_io::Error for Error {
     fn kind(&self) -> embedded_io::ErrorKind {
         match self {
@@ -95,6 +106,8 @@ impl embedded_io::Error for Error {
             Error::UnknownError => embedded_io::ErrorKind::Other,
             Error::LockingError(_) => embedded_io::ErrorKind::Other,
             Error::Ok => embedded_io::ErrorKind::Other, // 这是一个特殊情况，通常不应作为错误返回
+            #[cfg(feature = "std")]
+            Error::IO(err) => err.kind().into(),
         }
     }
 }

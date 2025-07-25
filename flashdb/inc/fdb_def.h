@@ -278,13 +278,6 @@ struct fdb_db {
 #ifdef FDB_USING_FILE_MODE
         const char *dir;                         /**< directory path for saving database */
 #endif
-#ifdef FDB_USING_CUSTOM_MODE
-        struct {
-            fdb_err_t (*read)(void *db_user_data, uint32_t addr, void *buf, size_t size);
-            fdb_err_t (*write)(void *db_user_data, uint32_t addr, const void *buf, size_t size, bool sync);
-            fdb_err_t (*erase)(void *db_user_data, uint32_t addr, size_t size);
-        } custom;  
-#endif
     } storage;
     uint32_t sec_size;                           /**< flash section size. It's a multiple of block size */
     uint32_t max_size;                           /**< database max size. It's a multiple of section size */

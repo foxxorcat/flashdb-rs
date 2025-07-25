@@ -3,7 +3,7 @@
 //! 该模块提供了一个键值数据库(KVDB)的Rust封装，基于底层C库实现，支持自定义存储后端。
 //! 主要功能包括键值对的增删改查、迭代遍历、状态管理等，同时支持文件存储和自定义存储两种模式。
 
-use crate::storage::{rust_erase_callback, rust_read_callback, rust_write_callback};
+use crate::storage::std_impl::FileStrategy;
 use crate::{
     error::Error, fdb_blob, fdb_blob_make_by, fdb_blob_make_write, fdb_blob_read, fdb_kv,
     fdb_kv_del, fdb_kv_get_obj, fdb_kv_iterate, fdb_kv_iterator, fdb_kv_iterator_init,
@@ -107,23 +107,21 @@ impl KVDBBuilder {
         let storage_boxed_raw = Box::into_raw(storage_boxed);
         let storage = unsafe { Box::from_raw(storage_boxed_raw) };
 
+        let name = CString::new(self.name).unwrap();
+        let path = CString::new(self.path.unwrap_or_default()).unwrap();
+
         let kvdb = KVDB {
+            name,
+            path,
             inner: Default::default(), // 初始化内部C结构体
             storage,                   // 存储后端实例
         };
-
-        // 将Rust字符串转换为C字符串
-        let name_c = CString::new(self.name).unwrap();
-        let path_c = CString::new(self.path.unwrap_or_else(|| "".to_string())).unwrap();
 
         unsafe {
             // 获取数据库指针并配置存储回调
             let db_ptr = kvdb.handle() as fdb_db_t;
 
             (*db_ptr).mode = crate::fdb_storage_type_FDB_STORAGE_CUSTOM;
-            (*db_ptr).storage.custom.read = Some(rust_read_callback); // 注册读取回调
-            (*db_ptr).storage.custom.write = Some(rust_write_callback); // 注册写入回调
-            (*db_ptr).storage.custom.erase = Some(rust_erase_callback); // 注册擦除回调
 
             // 设置数据库参数
             (*db_ptr).sec_size = self.sec_size;
@@ -133,8 +131,8 @@ impl KVDBBuilder {
             // 初始化数据库
             let result = fdb_kvdb_init(
                 db_ptr as *mut fdb_kvdb,
-                name_c.as_ptr(),
-                path_c.as_ptr(),
+                kvdb.name.as_ptr(),
+                kvdb.path.as_ptr(),
                 core::ptr::null_mut(),
                 storage_boxed_raw as *mut _,
             );
@@ -175,10 +173,9 @@ impl KVDBBuilder {
     pub fn open(self) -> Result<KVDB, Error> {
         // 获取存储路径
         let path = self.path.clone().ok_or(Error::InvalidArgument)?;
-        let file_name = Path::new(&path).join(&self.name);
 
         // 创建标准存储后端
-        let storage = crate::StdStorage::new(&file_name).map_err(|_| Error::InitFailed)?;
+        let storage = crate::StdStorage::new(path, &self.name, self.sec_size, FileStrategy::Multi)?;
         self.open_with(storage)
     }
 }
@@ -187,6 +184,8 @@ impl KVDBBuilder {
 ///
 /// 封装了底层键值数据库实现，提供键值对的操作接口
 pub struct KVDB {
+    name: CString,
+    path: CString,
     inner: fdb_kvdb,                // 底层C库的数据库结构体
     storage: Box<Box<dyn Storage>>, // 存储后端实例
 }

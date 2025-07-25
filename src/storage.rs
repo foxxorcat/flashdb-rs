@@ -7,109 +7,107 @@
 //! - `std_impl`: 一个仅在 `std` 特性下可用的子模块，提供了基于文件的 `Storage` 实现。
 //! - **FFI 回调**: 提供了 C 库所需的 `extern "C"` 回调函数，它们是泛型的，可以与任何实现了 `HasStorage` 的数据库类型一起工作。
 
-use crate::{error::Error, fdb_err_t};
-use core::ffi::c_void;
+use crate::error::Error;
 use embedded_io::{Read, Seek, Write};
-
-// --- 核心 Trait 定义 ---
 
 pub trait Storage: Read<Error = Error> + Write<Error = Error> + Seek<Error = Error> {
     /// 擦除指定地址和大小的区域。
     fn erase(&mut self, addr: u32, size: usize) -> Result<(), Error>;
 }
 
-/// C 回调函数，用于处理读操作。
-///
-/// 它接收的 `user_data` 是一个指向 `Box<dyn Storage>` 的裸指针。
-/// 它将指针转回 Rust 的 Trait 对象引用，并调用相应的方法。
-pub unsafe extern "C" fn rust_read_callback(
-    user_data: *mut c_void,
-    addr: u32,
-    buf: *mut c_void,
-    size: usize,
-) -> fdb_err_t {
-    let storage = &mut *(user_data as *mut Box<dyn Storage>);
-
-    if storage
-        .seek(embedded_io::SeekFrom::Start(addr as u64))
-        .is_err()
-    {
-        return crate::fdb_err_t_FDB_READ_ERR;
-    }
-    let rust_slice = core::slice::from_raw_parts_mut(buf as *mut u8, size);
-
-    match storage.read_exact(rust_slice) {
-        Ok(_) => crate::fdb_err_t_FDB_NO_ERR,
-        Err(_) => crate::fdb_err_t_FDB_READ_ERR,
-    }
-}
-
-/// C 回调函数，用于处理写操作。
-pub unsafe extern "C" fn rust_write_callback(
-    user_data: *mut c_void,
-    addr: u32,
-    buf: *const c_void,
-    size: usize,
-    sync: bool,
-) -> fdb_err_t {
-    let storage = &mut *(user_data as *mut Box<dyn Storage>);
-
-    if storage
-        .seek(embedded_io::SeekFrom::Start(addr as u64))
-        .is_err()
-    {
-        return crate::fdb_err_t_FDB_WRITE_ERR;
-    }
-    let rust_slice = core::slice::from_raw_parts(buf as *const u8, size);
-    match storage.write_all(rust_slice) {
-        Ok(_) => {
-            if sync {
-                let _ = storage.flush();
-            }
-            crate::fdb_err_t_FDB_NO_ERR
-        }
-        Err(_) => crate::fdb_err_t_FDB_WRITE_ERR,
-    }
-}
-
-/// C 回调函数，用于处理擦除操作。
-pub unsafe extern "C" fn rust_erase_callback(
-    user_data: *mut c_void,
-    addr: u32,
-    size: usize,
-) -> fdb_err_t {
-    let storage = &mut *(user_data as *mut Box<dyn Storage>);
-    match storage.erase(addr, size) {
-        Ok(_) => crate::fdb_err_t_FDB_NO_ERR,
-        Err(_) => crate::fdb_err_t_FDB_ERASE_ERR,
-    }
-}
-
-// --- `std` 环境下的具体实现 ---
-
 /// 仅在 `std` 特性启用时，才编译此模块。
 #[cfg(feature = "std")]
 pub mod std_impl {
     use super::{Error, Read, Seek, Storage, Write};
+    use lru::LruCache;
     use std::fs::{File, OpenOptions};
     use std::io::prelude::{Read as StdRead, Seek as StdSeek, Write as StdWrite};
-    use std::path::Path;
+    use std::num::NonZeroUsize;
+    use std::path::{Path, PathBuf};
     use std::vec;
 
+    /// 定义文件存储策略
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum FileStrategy {
+        /// **单文件模式**: 整个数据库存储在一个文件中。性能更高。
+        Single,
+        /// **多文件模式**: 每个扇区存储在一个独立的文件中 (例如 `kv_db.fdb.0`, `kv_db.fdb.1`)。
+        /// 用于兼容原始 C 库的文件模式。
+        Multi,
+    }
+
     /// 一个基于 `std::fs::File` 的 `Storage` 实现，用于桌面环境。
+    ///
+    /// 它通过 `FileStrategy` 支持两种模式，并通过 LRU 缓存高效管理文件句柄。
     pub struct StdStorage {
-        file: File,
+        strategy: FileStrategy,
+        db_name: String,
+        sec_size: u32,
+        base_path: PathBuf, // 在单文件模式下是完整文件路径，在多文件模式下是目录路径
+        // 文件句柄缓存。键是扇区索引，值是文件句柄。
+        file_cache: LruCache<u32, File>,
+        // 当前的逻辑光标位置，由 `seek` 更新。
+        position: u64,
     }
 
     impl StdStorage {
-        /// 通过文件路径创建一个新的 `StdStorage` 实例。
-        pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
-            let file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(path)?;
-            Ok(Self { file })
+        /// 创建一个新的 `StdStorage` 实例。
+        ///
+        /// # 参数
+        /// - `path`: 文件或目录的路径。
+        /// - `db_name`: 数据库名称，用于在多文件模式下构造文件名。
+        /// - `sec_size`: 扇区大小，用于在多文件模式下计算文件索引。
+        /// - `strategy`: 文件存储策略 (`Single` 或 `Multi`)。
+        pub fn new<P: AsRef<Path>>(
+            path: P,
+            db_name: &str,
+            sec_size: u32,
+            strategy: FileStrategy,
+        ) -> Result<Self, std::io::Error> {
+            let base_path = path.as_ref().to_path_buf();
+            if strategy == FileStrategy::Multi {
+                // 在多文件模式下，确保基础路径是一个目录
+                std::fs::create_dir_all(&base_path)?;
+            }
+            Ok(Self {
+                strategy,
+                db_name: db_name.to_string(),
+                sec_size,
+                base_path,
+                // 缓存8个最近使用的文件句柄
+                file_cache: LruCache::new(NonZeroUsize::new(8).unwrap()),
+                position: 0,
+            })
+        }
+
+        /// 内部辅助函数：根据当前 `position` 获取对应的文件句柄和文件内偏移量。
+        fn get_file_and_offset(&mut self) -> Result<(&mut File, u64), Error> {
+            let (sector_index, offset_in_file) = match self.strategy {
+                FileStrategy::Single => (0, self.position),
+                FileStrategy::Multi => {
+                    let sector_index = (self.position / self.sec_size as u64) as u32;
+                    let offset = self.position % self.sec_size as u64;
+                    (sector_index, offset)
+                }
+            };
+
+            if !self.file_cache.contains(&sector_index) {
+                let file_path = match self.strategy {
+                    FileStrategy::Single => self.base_path.clone(),
+                    FileStrategy::Multi => self
+                        .base_path
+                        .join(format!("{}.fdb.{}", self.db_name, sector_index)),
+                };
+                let file = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open(&file_path)?;
+                self.file_cache.put(sector_index, file);
+            }
+
+            let file = self.file_cache.get_mut(&sector_index).unwrap();
+            Ok((file, offset_in_file))
         }
     }
 
@@ -119,53 +117,86 @@ pub mod std_impl {
 
     impl Read for StdStorage {
         fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Error> {
-            self.file.read(buf).map_err(|err| {
-                #[cfg(feature = "log")]
-                log::error!("StdStorage seek: {}", err);
-                Error::ReadError
-            })
+            let (file, offset) = self.get_file_and_offset()?;
+            file.seek(std::io::SeekFrom::Start(offset))?;
+            let bytes_read = file.read(buf)?;
+            self.position += bytes_read as u64;
+            Ok(bytes_read)
         }
     }
 
     impl Write for StdStorage {
         fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-            self.file.write(buf).map_err(|err| {
-                #[cfg(feature = "log")]
-                log::error!("StdStorage seek: {}", err);
-                Error::WriteError
-            })
+            let (file, offset) = self.get_file_and_offset()?;
+            file.seek(std::io::SeekFrom::Start(offset))?;
+            let bytes_written = file.write(buf)?;
+            self.position += bytes_written as u64;
+            Ok(bytes_written)
         }
+
         fn flush(&mut self) -> Result<(), Self::Error> {
-            self.file.flush().map_err(|err| {
-                #[cfg(feature = "log")]
-                log::error!("StdStorage seek: {}", err);
-                Error::WriteError
-            })
+            // 刷新缓存中所有的文件句柄
+            for (_, file) in self.file_cache.iter_mut() {
+                file.flush()?;
+            }
+            Ok(())
         }
     }
 
     impl Seek for StdStorage {
         fn seek(&mut self, pos: embedded_io::SeekFrom) -> Result<u64, Self::Error> {
-            let whence = match pos {
-                embedded_io::SeekFrom::Start(p) => std::io::SeekFrom::Start(p),
-                embedded_io::SeekFrom::End(p) => std::io::SeekFrom::End(p),
-                embedded_io::SeekFrom::Current(p) => std::io::SeekFrom::Current(p),
+            // Seek 只是更新逻辑光标位置，实际的文件指针移动在 Read/Write 中完成。
+            // 这里的 total_len 是一个逻辑值，我们用一个较大的数来近似，因为实际大小是动态的。
+            let total_len = u64::MAX;
+            let new_pos = match pos {
+                embedded_io::SeekFrom::Start(p) => p,
+                embedded_io::SeekFrom::End(p) => (total_len as i64 + p) as u64,
+                embedded_io::SeekFrom::Current(p) => (self.position as i64 + p) as u64,
             };
-            self.file.seek(whence).map_err(|err| {
-                #[cfg(feature = "log")]
-                log::error!("StdStorage seek: {}", err);
-                println!("StdStorage seek: {}", err);
-                Error::ReadError
-            })
+            self.position = new_pos;
+            Ok(self.position)
         }
     }
 
     impl Storage for StdStorage {
         fn erase(&mut self, addr: u32, size: usize) -> Result<(), Error> {
-            self.seek(embedded_io::SeekFrom::Start(addr as u64))?;
+            // 擦除操作是基于绝对地址的，不使用内部的 position。
+            let (sector_index, offset) = match self.strategy {
+                FileStrategy::Single => (0, addr as u64),
+                FileStrategy::Multi => {
+                    // 擦除必须在扇区边界上
+                    if addr % self.sec_size != 0 || size as u32 != self.sec_size {
+                        return Err(Error::InvalidArgument);
+                    }
+                    ((addr / self.sec_size) as u32, 0)
+                }
+            };
+
+            // 如果文件在缓存中，先移除，因为我们将要修改它
+            self.file_cache.pop(&sector_index);
+
+            let file_path = match self.strategy {
+                FileStrategy::Single => self.base_path.clone(),
+                FileStrategy::Multi => self
+                    .base_path
+                    .join(format!("{}.fdb.{}", self.db_name, sector_index)),
+            };
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&file_path)?;
+
+            if self.strategy == FileStrategy::Multi {
+                // 多文件模式下，截断文件以清空
+                file.set_len(0)?;
+            }
+
+            file.seek(std::io::SeekFrom::Start(offset))?;
             let buf = vec![0xFF; size];
-            self.write_all(&buf)?;
-            self.flush()
+            file.write_all(&buf)?;
+            file.flush()?;
+            Ok(())
         }
     }
 }

@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use crate::storage::{rust_erase_callback, rust_read_callback, rust_write_callback, Storage};
+use crate::storage::std_impl::FileStrategy;
+use crate::storage::Storage;
 use crate::{
     fdb_blob, fdb_blob_make_by_tsl, fdb_blob_make_write, fdb_blob_read, fdb_db_t, fdb_tsdb,
     fdb_tsdb_control_read, fdb_tsdb_control_write, fdb_tsdb_deinit, fdb_tsdb_init, fdb_tsdb_t,
@@ -102,14 +103,15 @@ impl TSDBBuilder {
         let storage_boxed_raw = Box::into_raw(storage_boxed);
         let storage = unsafe { Box::from_raw(storage_boxed_raw) };
 
+        let name = CString::new(self.name).unwrap();
+        let path = CString::new(self.path.unwrap_or_default()).unwrap();
+
         let tsdb = TSDB {
+            name,
+            path,
             inner: Default::default(),
             storage,
         };
-
-        // 1. 转换Rust字符串为C字符串(c 接管所有权)
-        let name_c = CString::new(self.name).unwrap();
-        let path_c = CString::new(self.path.unwrap_or_else(|| "".to_string())).unwrap();
 
         let entry_max_len = self.entry_max_len;
 
@@ -118,9 +120,6 @@ impl TSDBBuilder {
             let db_ptr = tsdb.handle() as fdb_db_t;
 
             (*db_ptr).mode = crate::fdb_storage_type_FDB_STORAGE_CUSTOM;
-            (*db_ptr).storage.custom.read = Some(rust_read_callback); // 注册读取回调
-            (*db_ptr).storage.custom.write = Some(rust_write_callback); // 注册写入回调
-            (*db_ptr).storage.custom.erase = Some(rust_erase_callback); // 注册擦除回调
 
             // 设置数据库参数
             (*db_ptr).sec_size = self.sec_size;
@@ -130,8 +129,8 @@ impl TSDBBuilder {
             // 初始化数据库
             let result = fdb_tsdb_init(
                 db_ptr as fdb_tsdb_t,
-                name_c.as_ptr(),
-                path_c.as_ptr(),
+                tsdb.name.as_ptr(),
+                tsdb.path.as_ptr(),
                 None,
                 entry_max_len,
                 storage_boxed_raw as *mut _,
@@ -176,10 +175,9 @@ impl TSDBBuilder {
     pub fn open(self) -> Result<TSDB, Error> {
         // 获取存储路径s
         let path = self.path.clone().ok_or(Error::InvalidArgument)?;
-        let file_name = Path::new(&path).join(&self.name);
 
         // 创建标准存储后端
-        let storage = crate::StdStorage::new(&file_name).map_err(|_|  Error::InitFailed)?;
+        let storage = crate::StdStorage::new(path, &self.name, self.sec_size, FileStrategy::Multi)?;
         self.open_with(storage)
     }
 }
@@ -189,6 +187,8 @@ impl TSDBBuilder {
 /// 封装底层C库接口，提供安全的Rust API
 /// --------------------------s
 pub struct TSDB {
+    name: CString,
+    path: CString,
     inner: fdb_tsdb,
     storage: Box<Box<dyn Storage>>,
 }

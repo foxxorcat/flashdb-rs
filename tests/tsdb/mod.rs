@@ -1,13 +1,8 @@
 #![cfg(test)]
 
-use embedded_io::{Seek,Read};
-use std::sync::Mutex;
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
-};
-use std::thread;
-use std::time::Duration;
+use std::i64;
+
+use embedded_io::{Read, Seek};
 
 use anyhow::Result;
 use flashdb_rs::fdb_tsl;
@@ -28,27 +23,30 @@ fn test_tsdb_basic_operations() -> Result<()> {
 
     // 测试数据
     let test_data = b"Test data for TSDB";
-    let timestamp = 1686451200; // 2023-06-11 00:00:00
+    let timestamp = 1686451200_000; // 2023-06-11 00:00:00
 
     // 1. 追加数据
     tsdb.append_with_timestamp(timestamp, test_data)?;
+    
+    let timestamp = 1686451201_000; // 2023-06-11 00:00:01
+    tsdb.append_with_timestamp(timestamp, test_data)?;
+
+    let count_num = tsdb.count(0, i64::MAX, TSLStatus::Write);
+    assert_eq!(count_num, 2, "数据追加后应能通过迭代查询到");
 
     // 2. 迭代验证数据
     let mut target_tsl = Default::default();
-    let mut iter_count = 0;
     tsdb.tsdb_iter(
         |db, tsl| {
-            iter_count += 1;
             // 读取数据并验证
             let data = db.get_value(tsl).unwrap().unwrap();
             assert_eq!(data, test_data);
 
             target_tsl = tsl.clone();
-            true
+            false
         },
         false,
     );
-    assert_eq!(iter_count, 1, "数据追加后应能通过迭代查询到");
 
     // 3. 按时间查询
     let mut time_count = 0;
@@ -67,7 +65,7 @@ fn test_tsdb_basic_operations() -> Result<()> {
             let status: TSLStatus = tsl_obj.status.into();
             assert_eq!(status, TSLStatus::UserStatus1);
             status_checked = true;
-            true
+            false
         },
         false,
     );
@@ -135,7 +133,7 @@ fn test_tsdb_reader_operations() -> Result<()> {
 
     // 写入测试数据
     let test_data = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let timestamp = 1686451200;
+    let timestamp = 1686451200_000;
     tsdb.append_with_timestamp(timestamp, test_data)?;
 
     // 获取TSL对象（通过迭代）
@@ -184,7 +182,7 @@ fn test_tsl_status_management() -> Result<()> {
 
     // 写入数据并获取时间戳
     let test_data = b"Status management test";
-    let timestamp = 1686451200;
+    let timestamp = 1686451200_000;
     tsdb.append_with_timestamp(timestamp, test_data)?;
 
     // 1. 验证初始状态为Write
