@@ -10,9 +10,9 @@ use crate::{
     fdb_tsl_status_FDB_TSL_PRE_WRITE, fdb_tsl_status_FDB_TSL_UNUSED,
     fdb_tsl_status_FDB_TSL_USER_STATUS1, fdb_tsl_status_FDB_TSL_USER_STATUS2,
     fdb_tsl_status_FDB_TSL_WRITE, fdb_tsl_status_t, fdb_tsl_t, Error, RawHandle,
-    FDB_TSDB_CTRL_GET_LAST_TIME, FDB_TSDB_CTRL_GET_SEC_SIZE, FDB_TSDB_CTRL_SET_FILE_MODE,
-    FDB_TSDB_CTRL_SET_MAX_SIZE, FDB_TSDB_CTRL_SET_NOT_FORMAT, FDB_TSDB_CTRL_SET_ROLLOVER,
-    FDB_TSDB_CTRL_SET_SEC_SIZE,
+    FDB_TSDB_CTRL_GET_LAST_TIME, FDB_TSDB_CTRL_GET_ROLLOVER, FDB_TSDB_CTRL_GET_SEC_SIZE,
+    FDB_TSDB_CTRL_SET_FILE_MODE, FDB_TSDB_CTRL_SET_MAX_SIZE, FDB_TSDB_CTRL_SET_NOT_FORMAT,
+    FDB_TSDB_CTRL_SET_ROLLOVER, FDB_TSDB_CTRL_SET_SEC_SIZE,
 };
 
 use alloc::ffi::CString;
@@ -46,7 +46,8 @@ pub struct TSDBBuilder {
     path: Option<String>, // 存储路径（文件系统或设备）
     entry_max_len: usize, // 单个日志条目的最大字节数
     sec_size: u32,        // 存储扇区大小（影响IO效率）
-    max_size: u32,        // 数据库最大文件大小（文件模式）
+    max_size: u32,        // 数据库最大文件大小
+    rollover: bool,       // 开启循环写入
     not_format: bool,     // 初始化时是否跳过格式化
 }
 
@@ -57,6 +58,7 @@ impl TSDBBuilder {
             path: None,
             sec_size: 4096, // 默认扇区大小4096字节
             max_size,
+            rollover: true,
             not_format: false,
             entry_max_len,
         }
@@ -106,7 +108,7 @@ impl TSDBBuilder {
         let name = CString::new(self.name).unwrap();
         let path = CString::new(self.path.unwrap_or_default()).unwrap();
 
-        let tsdb = TSDB {
+        let mut tsdb = TSDB {
             name,
             path,
             inner: Default::default(),
@@ -118,13 +120,11 @@ impl TSDBBuilder {
         unsafe {
             // 获取数据库指针并配置存储回调s
             let db_ptr = tsdb.handle() as fdb_db_t;
-
             (*db_ptr).mode = crate::fdb_storage_type_FDB_STORAGE_CUSTOM;
 
-            // 设置数据库参数
-            (*db_ptr).sec_size = self.sec_size;
-            (*db_ptr).max_size = self.max_size;
-            (*db_ptr).not_formatable = self.not_format;
+            tsdb.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_SEC_SIZE, self.sec_size);
+            tsdb.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_MAX_SIZE, self.max_size);
+            tsdb.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_NOT_FORMAT, self.not_format);
 
             // 初始化数据库
             let result = fdb_tsdb_init(
@@ -135,6 +135,8 @@ impl TSDBBuilder {
                 entry_max_len,
                 storage_boxed_raw as *mut _,
             );
+
+            tsdb.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_ROLLOVER, self.rollover);
 
             Error::check_and_return(result, tsdb)
         }
@@ -157,6 +159,7 @@ impl TSDBBuilder {
             sec_size: 4096, // 默认4KB扇区（常见块设备大小）
             max_size: max_size,
             entry_max_len: entry_max,
+            rollover: true,
             not_format: false,
         }
     }
@@ -390,20 +393,20 @@ impl TSDB {
     /// 获取数据库是否启用rollover功能（文件大小超出时循环覆盖）
     pub fn rollover(&self) -> bool {
         let mut flag = false;
-        self.fdb_tsdb_control_read(FDB_TSDB_CTRL_SET_ROLLOVER, &mut flag);
+        self.fdb_tsdb_control_read(FDB_TSDB_CTRL_GET_ROLLOVER, &mut flag);
         flag
     }
 
     /// 设置数据库rollover功能（文件模式专用）
     ///
     /// # 参数
-    /// - `disable`: `true`禁用rollover，`false`启用
+    /// - `enable`: `true`启用rollover，`false`禁用
     ///
     /// # 注意
     /// - 禁用rollover时，数据库写满后会报错
     /// - 启用时会循环覆盖旧数据（类似循环缓冲区）
-    pub fn set_rollover(&mut self, disable: bool) {
-        self.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_ROLLOVER, !disable);
+    pub fn set_rollover(&mut self, enable: bool) {
+        self.fdb_tsdb_control_write(FDB_TSDB_CTRL_SET_ROLLOVER, enable);
     }
 
     /// 获取当前扇区大小（字节）

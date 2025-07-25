@@ -1735,7 +1735,7 @@ void fdb_kvdb_control(fdb_kvdb_t db, int cmd, void *arg)
 #endif
         break;
     case FDB_KVDB_CTRL_SET_MAX_SIZE:
-#ifdef FDB_USING_FILE_MODE
+#if (defined(FDB_USING_FILE_MODE) || defined(FDB_USING_CUSTOM_MODE))
         /* this change MUST before database initialization */
         FDB_ASSERT(db->parent.init_ok == false);
         db->parent.max_size = *(uint32_t *)arg;

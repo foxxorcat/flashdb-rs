@@ -12,7 +12,10 @@ use crate::{
     fdb_kv_status_FDB_KV_UNUSED, fdb_kv_status_FDB_KV_WRITE, fdb_kvdb, fdb_kvdb_deinit,
     fdb_kvdb_init, fdb_kvdb_t, RawHandle, Storage,
 };
-use crate::{fdb_db_t, fdb_kvdb_control_read, fdb_kvdb_control_write};
+use crate::{
+    fdb_db_t, fdb_kvdb_control_read, fdb_kvdb_control_write, FDB_KVDB_CTRL_SET_MAX_SIZE,
+    FDB_KVDB_CTRL_SET_NOT_FORMAT, FDB_KVDB_CTRL_SET_SEC_SIZE,
+};
 use alloc::ffi::CString;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -110,7 +113,7 @@ impl KVDBBuilder {
         let name = CString::new(self.name).unwrap();
         let path = CString::new(self.path.unwrap_or_default()).unwrap();
 
-        let kvdb = KVDB {
+        let mut kvdb = KVDB {
             name,
             path,
             inner: Default::default(), // 初始化内部C结构体
@@ -124,9 +127,9 @@ impl KVDBBuilder {
             (*db_ptr).mode = crate::fdb_storage_type_FDB_STORAGE_CUSTOM;
 
             // 设置数据库参数
-            (*db_ptr).sec_size = self.sec_size;
-            (*db_ptr).max_size = self.max_size;
-            (*db_ptr).not_formatable = self.not_format;
+            kvdb.fdb_kvdb_control_write(FDB_KVDB_CTRL_SET_SEC_SIZE, self.sec_size);
+            kvdb.fdb_kvdb_control_write(FDB_KVDB_CTRL_SET_MAX_SIZE, self.max_size);
+            kvdb.fdb_kvdb_control_write(FDB_KVDB_CTRL_SET_NOT_FORMAT, self.not_format);
 
             // 初始化数据库
             let result = fdb_kvdb_init(
