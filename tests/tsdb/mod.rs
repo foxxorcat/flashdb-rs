@@ -23,7 +23,7 @@ fn test_tsdb_basic_operations() -> Result<()> {
 
     // 初始化TSDB（128KB最大文件，单条目最大8字节）
     let mut tsdb = TSDBBuilder::file("basic_test", path, 128 * 1024, 1024)
-        .with_sec_size(4096)
+        // .with_sec_size(4096)
         .open()?;
 
     // 测试数据

@@ -24,8 +24,8 @@
 
 #define FDB_LOG_TAG ""
 
-#if !defined(FDB_USING_FAL_MODE) && !defined(FDB_USING_FILE_MODE)
-#error "Please defined the FDB_USING_FAL_MODE or FDB_USING_FILE_MODE macro"
+#if !defined(FDB_USING_FAL_MODE) && !defined(FDB_USING_FILE_MODE) && !defined(FDB_USING_CUSTOM_MODE)
+#error "Please defined the FDB_USING_FAL_MODE or FDB_USING_FILE_MODE or FDB_USING_CUSTOM_MODE macro"
 #endif
 
 fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_type type, void *user_data)
@@ -42,8 +42,10 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
     db->type = type;
     db->user_data = user_data;
 
-    if (db->file_mode) {
-#ifdef FDB_USING_FILE_MODE
+  switch (db->mode)
+    {
+#if defined(FDB_USING_FILE_MODE)
+    case FDB_STORAGE_FILE:
         memset(db->cur_file_sec, FDB_FAILED_ADDR, FDB_FILE_CACHE_TABLE_SIZE * sizeof(db->cur_file_sec[0]));
         /* must set when using file mode */
         FDB_ASSERT(db->sec_size != 0);
@@ -56,8 +58,8 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
         db->storage.dir = path;
         FDB_ASSERT(strlen(path) != 0)
 #endif
-    } else {
-#ifdef FDB_USING_FAL_MODE
+#if defined(FDB_USING_FAL_MODE)
+    case FDB_STORAGE_FAL:
         size_t block_size;
 
         /* FAL (Flash Abstraction Layer) initialization */
@@ -80,7 +82,16 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
         }
 
         db->max_size = db->storage.part->len;
-#endif /* FDB_USING_FAL_MODE */
+#endif
+#if defined(FDB_USING_CUSTOM_MODE)
+    case FDB_STORAGE_CUSTOM:
+        FDB_ASSERT(db->sec_size != 0);
+        FDB_ASSERT(db->max_size != 0);
+        break;
+#endif
+    default:
+        /* 无效的模式 */
+        return FDB_INIT_FAILED;
     }
 
     /* the block size MUST to be the Nth power of 2 */

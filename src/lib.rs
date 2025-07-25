@@ -1,8 +1,10 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 #![allow(clippy::all)]
-#![no_std]
+
 extern crate alloc;
 
 pub mod error;
@@ -11,7 +13,14 @@ pub mod kvdb;
 pub mod tsdb;
 pub mod utils;
 
+pub mod storage;
+use storage::Storage;
+
+#[cfg(feature = "std")]
+pub use storage::std_impl::StdStorage;
+
 pub use error::*;
+
 pub use utils::*;
 pub use kvdb::*;
 pub use tsdb::*;

@@ -19,8 +19,9 @@ log = { version = "0.4.27", optional = true }
 thiserror = "2.0.12"
 
 [features]
-default = ["kvdb", "tsdb", "log","time64"]
+default = ["kvdb", "tsdb", "log", "time64", "std"]
 kvdb = []
 tsdb = []
 time64 = []
+std = []
 log = ["dep:log"]

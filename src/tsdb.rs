@@ -1,5 +1,8 @@
+use std::path::Path;
+
+use crate::storage::{rust_erase_callback, rust_read_callback, rust_write_callback, Storage};
 use crate::{
-    fdb_blob, fdb_blob_make_by_tsl, fdb_blob_make_write, fdb_blob_read, fdb_tsdb,
+    fdb_blob, fdb_blob_make_by_tsl, fdb_blob_make_write, fdb_blob_read, fdb_db_t, fdb_tsdb,
     fdb_tsdb_control_read, fdb_tsdb_control_write, fdb_tsdb_deinit, fdb_tsdb_init, fdb_tsdb_t,
     fdb_tsl, fdb_tsl_append_with_ts, fdb_tsl_clean, fdb_tsl_iter, fdb_tsl_iter_by_time,
     fdb_tsl_iter_reverse, fdb_tsl_query_count, fdb_tsl_set_status, fdb_tsl_status_FDB_TSL_DELETED,
@@ -38,42 +41,28 @@ impl From<fdb_tsl_status_t> for TSLStatus {
 /// --------------------------
 #[derive(Debug, Clone)]
 pub struct TSDBBuilder {
-    name: String,          // 数据库名称（标识）
-    path: String,          // 存储路径（文件系统或设备）
-    entry_max_len: usize,  // 单个日志条目的最大字节数
-    sec_size: u32,         // 存储扇区大小（影响IO效率）
-    max_size: Option<u32>, // 数据库最大文件大小（文件模式）
-    not_format: bool,      // 初始化时是否跳过格式化
+    name: String,         // 数据库名称（标识）
+    path: Option<String>, // 存储路径（文件系统或设备）
+    entry_max_len: usize, // 单个日志条目的最大字节数
+    sec_size: u32,        // 存储扇区大小（影响IO效率）
+    max_size: u32,        // 数据库最大文件大小（文件模式）
+    not_format: bool,     // 初始化时是否跳过格式化
 }
 
 impl TSDBBuilder {
-    /// 创建文件模式的TSDB构建器（默认配置）
-    ///
-    /// # 参数
-    /// - `name`: 数据库名称
-    /// - `path`: 存储路径
-    /// - `max_size`: 最大文件大小（字节）
-    /// - `entry_max`: 单个条目的最大长度
-    pub fn file<S: ToString>(name: S, path: S, max_size: u32, entry_max: usize) -> Self {
+    pub fn new(name: &str, max_size: u32, entry_max_len: usize) -> Self {
         Self {
             name: name.to_string(),
-            path: path.to_string(),
-            sec_size: 4096, // 默认4KB扇区（常见块设备大小）
-            max_size: Some(max_size),
-            entry_max_len: entry_max,
+            path: None,
+            sec_size: 4096, // 默认扇区大小4096字节
+            max_size,
             not_format: false,
+            entry_max_len,
         }
     }
-
     /// 链式设置数据库名称
-    pub fn with_name<S: ToString>(mut self, name: S) -> Self {
+    pub fn with_name<N: ToString>(mut self, name: N) -> Self {
         self.name = name.to_string();
-        self
-    }
-
-    /// 链式设置存储路径
-    pub fn with_path<S: ToString>(mut self, path: S) -> Self {
-        self.path = path.to_string();
         self
     }
 
@@ -91,7 +80,7 @@ impl TSDBBuilder {
 
     /// 链式设置最大文件大小（超出时触发rollover）
     pub fn with_max_size(mut self, max_size: u32) -> Self {
-        self.max_size = Some(max_size);
+        self.max_size = max_size;
         self
     }
 
@@ -101,58 +90,107 @@ impl TSDBBuilder {
         self
     }
 
-    /// 打开数据库实例（核心初始化逻辑）
+    /// 使用指定的存储后端打开数据库
     ///
-    /// # 安全风险
-    /// - 底层C字符串操作需确保编码正确
-    /// - 初始化失败时需正确释放资源
+    /// # 参数
+    /// - `storage`: 实现Storage trait的存储后端实例
+    ///
+    /// # 返回值
+    /// 成功时返回KVDB实例，失败时返回Error
+    pub fn open_with<S: Storage + 'static>(self, storage: S) -> Result<TSDB, Error> {
+        let storage_boxed = Box::new(Box::new(storage) as Box<dyn Storage>);
+        let storage_boxed_raw = Box::into_raw(storage_boxed);
+        let storage = unsafe { Box::from_raw(storage_boxed_raw) };
+
+        let tsdb = TSDB {
+            inner: Default::default(),
+            storage,
+        };
+
+        // 1. 转换Rust字符串为C字符串(c 接管所有权)
+        let name_c = CString::new(self.name).unwrap();
+        let path_c = CString::new(self.path.unwrap_or_else(|| "".to_string())).unwrap();
+
+        let entry_max_len = self.entry_max_len;
+
+        unsafe {
+            // 获取数据库指针并配置存储回调s
+            let db_ptr = tsdb.handle() as fdb_db_t;
+
+            (*db_ptr).mode = crate::fdb_storage_type_FDB_STORAGE_CUSTOM;
+            (*db_ptr).storage.custom.read = Some(rust_read_callback); // 注册读取回调
+            (*db_ptr).storage.custom.write = Some(rust_write_callback); // 注册写入回调
+            (*db_ptr).storage.custom.erase = Some(rust_erase_callback); // 注册擦除回调
+
+            // 设置数据库参数
+            (*db_ptr).sec_size = self.sec_size;
+            (*db_ptr).max_size = self.max_size;
+            (*db_ptr).not_formatable = self.not_format;
+
+            // 初始化数据库
+            let result = fdb_tsdb_init(
+                db_ptr as fdb_tsdb_t,
+                name_c.as_ptr(),
+                path_c.as_ptr(),
+                None,
+                entry_max_len,
+                storage_boxed_raw as *mut _,
+            );
+
+            Error::check_and_return(result, tsdb)
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl TSDBBuilder {
+    /// 创建文件模式的TSDB构建器（默认配置）
+    ///
+    /// # 参数
+    /// - `name`: 数据库名称
+    /// - `path`: 存储路径
+    /// - `max_size`: 最大文件大小（字节）
+    /// - `entry_max`: 单个条目的最大长度
+    pub fn file<S: ToString>(name: S, path: S, max_size: u32, entry_max: usize) -> Self {
+        Self {
+            name: name.to_string(),
+            path: Some(path.to_string()),
+            sec_size: 4096, // 默认4KB扇区（常见块设备大小）
+            max_size: max_size,
+            entry_max_len: entry_max,
+            not_format: false,
+        }
+    }
+
+    /// 链式设置存储路径
+    pub fn with_path<S: ToString>(mut self, path: S) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    /// 打开数据库实例（核心初始化逻辑）
     ///
     /// # 返回
     /// - `Ok(TSDB)`: 成功创建数据库实例
     /// - `Err(Error)`: 初始化失败（如路径无效、参数错误）
     pub fn open(self) -> Result<TSDB, Error> {
-        let tsdb = TSDB {
-            inner: Default::default(),
-        };
+        // 获取存储路径s
+        let path = self.path.clone().ok_or(Error::InvalidArgument)?;
+        let file_name = Path::new(&path).join(&self.name);
 
-        // 1. 转换Rust字符串为C字符串(c 接管所有权)
-        let name: *mut core::ffi::c_char = CString::new(self.name)?.into_raw();
-        let path: *mut core::ffi::c_char = CString::new(self.path)?.into_raw();
-        let entry_max_len = self.entry_max_len;
-
-        // 2. 写入基础配置参数
-        fdb_tsdb_control_write(tsdb.handle(), FDB_TSDB_CTRL_SET_SEC_SIZE, self.sec_size);
-        fdb_tsdb_control_write(tsdb.handle(), FDB_TSDB_CTRL_SET_NOT_FORMAT, self.not_format);
-
-        // 3. 设置为文件存储模式并配置最大大小
-        fdb_tsdb_control_write(tsdb.handle(), FDB_TSDB_CTRL_SET_FILE_MODE, true);
-        if let Some(max_size) = self.max_size {
-            fdb_tsdb_control_write(tsdb.handle(), FDB_TSDB_CTRL_SET_MAX_SIZE, max_size);
-        }
-
-        // 4. 调用底层初始化函数（不安全操作）
-        Error::convert(unsafe {
-            fdb_tsdb_init(
-                tsdb.handle(),
-                name as *const _,
-                path as *const _,
-                None,
-                entry_max_len,
-                core::ptr::null_mut(),
-            )
-        })?;
-
-        // 5. 返回封装的TSDB实例（自动管理生命周期）
-        Ok(tsdb)
+        // 创建标准存储后端
+        let storage = crate::StdStorage::new(&file_name).map_err(|_|  Error::InitFailed)?;
+        self.open_with(storage)
     }
 }
 
 /// --------------------------
 /// 时间序列数据库核心结构体
 /// 封装底层C库接口，提供安全的Rust API
-/// --------------------------
+/// --------------------------s
 pub struct TSDB {
-    inner: fdb_tsdb, // 底层C库TSDB句柄（不透明指针）
+    inner: fdb_tsdb,
+    storage: Box<Box<dyn Storage>>,
 }
 
 // 迭代器闭包数据包装（用于跨语言回调）
@@ -173,7 +211,7 @@ unsafe extern "C" fn iter_callback<F: FnMut(&mut TSDB, &mut fdb_tsl) -> bool + S
     // 从C指针还原Rust结构体（unsafe操作）
     let callback_data: &mut CallbackData<'_, F> = unsafe { core::mem::transmute(arg) };
     // 调用用户闭包并传递数据库引用和TSL句柄
-    // 这里反转一下，使其更符合rust便利习惯
+    // 这里反转一下，使其更符合rust遍历习惯
     !(callback_data.callback)(callback_data.db, unsafe { core::mem::transmute(tsl) })
 }
 

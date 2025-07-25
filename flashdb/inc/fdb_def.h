@@ -197,6 +197,12 @@ typedef struct fdb_tsl *fdb_tsl_t;
 typedef bool (*fdb_tsl_cb)(fdb_tsl_t tsl, void *arg);
 
 typedef enum {
+    FDB_STORAGE_FAL,
+    FDB_STORAGE_FILE,
+    FDB_STORAGE_CUSTOM
+} fdb_storage_type;
+
+typedef enum {
     FDB_DB_TYPE_KV,
     FDB_DB_TYPE_TS,
 } fdb_db_type;
@@ -264,12 +270,20 @@ typedef struct fdb_db *fdb_db_t;
 struct fdb_db {
     const char *name;                            /**< database name */
     fdb_db_type type;                            /**< database type */
+    fdb_storage_type mode;                       /**< storage mode */
     union {
 #ifdef FDB_USING_FAL_MODE
         const struct fal_partition *part;        /**< flash partition for saving database */
 #endif
 #ifdef FDB_USING_FILE_MODE
         const char *dir;                         /**< directory path for saving database */
+#endif
+#ifdef FDB_USING_CUSTOM_MODE
+        struct {
+            fdb_err_t (*read)(void *db_user_data, uint32_t addr, void *buf, size_t size);
+            fdb_err_t (*write)(void *db_user_data, uint32_t addr, const void *buf, size_t size, bool sync);
+            fdb_err_t (*erase)(void *db_user_data, uint32_t addr, size_t size);
+        } custom;  
 #endif
     } storage;
     uint32_t sec_size;                           /**< flash section size. It's a multiple of block size */

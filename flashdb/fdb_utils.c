@@ -256,65 +256,69 @@ extern fdb_err_t _fdb_file_erase(fdb_db_t db, uint32_t addr, size_t size);
 
 fdb_err_t _fdb_flash_read(fdb_db_t db, uint32_t addr, void *buf, size_t size)
 {
-    fdb_err_t result = FDB_NO_ERR;
-
-    if (db->file_mode) {
-#ifdef FDB_USING_FILE_MODE
-        return _fdb_file_read(db, addr, buf, size);
-#else
-        return FDB_READ_ERR;
+    switch (db->mode) {
+#if defined(FDB_USING_CUSTOM_MODE)
+        case FDB_STORAGE_CUSTOM:
+            return db->storage.custom.read(db->user_data, addr, buf, size);
 #endif
-    } else {
-#ifdef FDB_USING_FAL_MODE
-        if (fal_partition_read(db->storage.part, addr, (uint8_t *) buf, size) < 0) {
-            result = FDB_READ_ERR;
-        }
+#if defined(FDB_USING_FILE_MODE)
+        case FDB_STORAGE_FILE:
+            return _fdb_file_read(db, addr, buf, size);
 #endif
+#if defined(FDB_USING_FAL_MODE)
+        case FDB_STORAGE_FAL:
+            if (fal_partition_read(db->storage.part, addr, (uint8_t *) buf, size) < 0) {
+                return FDB_READ_ERR;
+            }
+            return FDB_NO_ERR;
+#endif
+        default:
+            return FDB_READ_ERR;
     }
-
-    return result;
 }
 
 fdb_err_t _fdb_flash_erase(fdb_db_t db, uint32_t addr, size_t size)
 {
-    fdb_err_t result = FDB_NO_ERR;
-
-    if (db->file_mode) {
-#ifdef FDB_USING_FILE_MODE
-        return _fdb_file_erase(db, addr, size);
-#else
-        return FDB_ERASE_ERR;
-#endif /* FDB_USING_FILE_MODE */
-    } else {
-#ifdef FDB_USING_FAL_MODE
-        if (fal_partition_erase(db->storage.part, addr, size) < 0) {
-            result = FDB_ERASE_ERR;
-        }
+    switch (db->mode) {
+#if defined(FDB_USING_CUSTOM_MODE)
+        case FDB_STORAGE_CUSTOM:
+            return db->storage.custom.erase(db->user_data, addr, size);
 #endif
+#if defined(FDB_USING_FILE_MODE)
+        case FDB_STORAGE_FILE:
+            return _fdb_file_erase(db, addr, size);
+#endif
+#if defined(FDB_USING_FAL_MODE)
+        case FDB_STORAGE_FAL:
+            if (fal_partition_erase(db->storage.part, addr, size) < 0) {
+                return FDB_ERASE_ERR;
+            }
+            return FDB_NO_ERR;
+#endif
+        default:
+            return FDB_ERASE_ERR;
     }
-
-    return result;
 }
 
 fdb_err_t _fdb_flash_write(fdb_db_t db, uint32_t addr, const void *buf, size_t size, bool sync)
 {
-    fdb_err_t result = FDB_NO_ERR;
-
-    if (db->file_mode) {
-#ifdef FDB_USING_FILE_MODE
-        return _fdb_file_write(db, addr, buf, size, sync);
-#else
-        return FDB_WRITE_ERR;
-#endif /* FDB_USING_FILE_MODE */
-    } else {
-#ifdef FDB_USING_FAL_MODE
-        if (fal_partition_write(db->storage.part, addr, (uint8_t *)buf, size) < 0)
-        {
-            result = FDB_WRITE_ERR;
-        }
+    switch (db->mode) {
+#if defined(FDB_USING_CUSTOM_MODE)
+        case FDB_STORAGE_CUSTOM:
+            return db->storage.custom.write(db->user_data, addr, buf, size, sync);
 #endif
+#if defined(FDB_USING_FILE_MODE)
+        case FDB_STORAGE_FILE:
+            return _fdb_file_write(db, addr, buf, size, sync);
+#endif
+#if defined(FDB_USING_FAL_MODE)
+        case FDB_STORAGE_FAL:
+            if (fal_partition_write(db->storage.part, addr, (const uint8_t *)buf, size) < 0) {
+                return FDB_WRITE_ERR;
+            }
+            return FDB_NO_ERR;
+#endif
+        default:
+            return FDB_WRITE_ERR;
     }
-
-    return result;
-
 }

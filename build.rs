@@ -16,11 +16,6 @@ fn main() {
     // 定义统一的配置选项
     let log_tag = "\"flashdb-rs\"";
 
-    let file_mode = if cfg!(target_os = "windows") {
-        "FDB_USING_FILE_LIBC_MODE"
-    } else {
-        "FDB_USING_FILE_POSIX_MODE"
-    };
     let use_64bit_timestamp = cfg!(feature = "time64");
     let use_kvdb = cfg!(feature = "kvdb");
     let use_tsdb = cfg!(feature = "tsdb");
@@ -42,7 +37,7 @@ fn main() {
         build.define("FDB_USING_TIMESTAMP_64BIT", "1");
     }
     build.define("FDB_LOG_TAG", log_tag);
-    build.define(file_mode, "1");
+    build.define("FDB_USING_CUSTOM_MODE", "1");
 
     if use_kvdb {
         build.define("FDB_USING_KVDB", "1");
@@ -72,7 +67,7 @@ fn main() {
         bindings = bindings.clang_arg("-DFDB_USING_TIMESTAMP_64BIT=1");
     }
     bindings = bindings.clang_arg(format!("-DFDB_LOG_TAG={}", log_tag));
-    bindings = bindings.clang_arg(format!("-D{}=1", file_mode));
+    bindings = bindings.clang_arg("-DFDB_USING_CUSTOM_MODE=1");
 
     if use_kvdb {
         bindings = bindings.clang_arg("-DFDB_USING_KVDB=1");
