@@ -1,0 +1,4 @@
+*.rs linguist-language=Rust
+
+# 排除部分C文件（如测试用C代码）
+flashdb/**/* linguist-vendored
