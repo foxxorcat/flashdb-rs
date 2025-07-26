@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::storage::std_impl::FileStrategy;
 use crate::storage::Storage;
 use crate::{
@@ -11,7 +9,7 @@ use crate::{
     fdb_tsl_status_FDB_TSL_USER_STATUS1, fdb_tsl_status_FDB_TSL_USER_STATUS2,
     fdb_tsl_status_FDB_TSL_WRITE, fdb_tsl_status_t, fdb_tsl_t, Error, RawHandle,
     FDB_TSDB_CTRL_GET_LAST_TIME, FDB_TSDB_CTRL_GET_ROLLOVER, FDB_TSDB_CTRL_GET_SEC_SIZE,
-    FDB_TSDB_CTRL_SET_FILE_MODE, FDB_TSDB_CTRL_SET_MAX_SIZE, FDB_TSDB_CTRL_SET_NOT_FORMAT,
+    FDB_TSDB_CTRL_SET_MAX_SIZE, FDB_TSDB_CTRL_SET_NOT_FORMAT,
     FDB_TSDB_CTRL_SET_ROLLOVER, FDB_TSDB_CTRL_SET_SEC_SIZE,
 };
 
@@ -193,6 +191,7 @@ pub struct TSDB {
     name: CString,
     path: CString,
     inner: fdb_tsdb,
+    #[allow(dead_code)]
     storage: Box<Box<dyn Storage>>,
 }
 

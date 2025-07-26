@@ -1,9 +1,9 @@
-extern crate bindgen;
-
 use std::env;
 use std::path::PathBuf;
 
-fn main() {    
+fn main() {
+    let target = env::var("TARGET").expect("TARGET environment variable not set");
+
     let srcs = [
         "flashdb/fdb.c",
         "flashdb/fdb_file.c",
@@ -13,9 +13,6 @@ fn main() {
         "flashdb/shim.c",
     ];
 
-    // 定义统一的配置选项
-    let log_tag = "\"flashdb-rs\"";
-
     let use_64bit_timestamp = cfg!(feature = "time64");
     let use_kvdb = cfg!(feature = "kvdb");
     let use_tsdb = cfg!(feature = "tsdb");
@@ -23,20 +20,36 @@ fn main() {
 
     // 编译 FlashDB C 库
     let mut build = cc::Build::new();
+
+    {
+        let linker = match target.as_str() {
+            "xtensa-esp32-espidf" =>Some("xtensa-esp32-elf-gcc"),
+            "xtensa-esp32s2-espidf" =>Some("xtensa-esp32s2-elf-gcc"),
+            "xtensa-esp32s3-espidf" => Some("xtensa-esp32s3-elf-gcc"),
+
+            // cc 中有相关映射，应该可以不设置
+            // Keep C3 as the first in the list, so it is picked up by default; as C2 does not work for older ESP IDFs
+            "riscv32imc-esp-espidf"|
+            // Keep C6 at the first in the list, so it is picked up by default; as H2 does not have a Wifi
+            "riscv32imac-esp-espidf" | "riscv32imafc-esp-espidf" => Some("riscv32-esp-elf-gcc"),
+            _ => None
+        };
+
+        if let Some(linker) = linker {
+            build.flag_if_supported("-mlongcalls");
+            build.compiler(linker);
+        }
+    }
+
     build
         .files(&srcs)
         .include("flashdb/inc")
-        // .compiler("xtensa-esp32s3-elf-gcc")
-        .flag_if_supported("-mlongcalls")
-        .flag_if_supported("-Wno-macro-redefined")
-        .std("c99")
-        .warnings(false);
+        .cargo_warnings(false);
 
     // 应用配置到编译过程
     if use_64bit_timestamp {
         build.define("FDB_USING_TIMESTAMP_64BIT", "1");
     }
-    build.define("FDB_LOG_TAG", log_tag);
     build.define("FDB_USING_CUSTOM_MODE", "1");
 
     if use_kvdb {
@@ -51,6 +64,7 @@ fn main() {
 
     build.compile("flashdb");
 
+    println!("cargo:rerun-if-changed=flashdb/inc/flashdb.h");
     // 生成 Rust 绑定
     let mut bindings = bindgen::Builder::default()
         .header("flashdb/inc/flashdb.h")
@@ -66,7 +80,6 @@ fn main() {
     if use_64bit_timestamp {
         bindings = bindings.clang_arg("-DFDB_USING_TIMESTAMP_64BIT=1");
     }
-    bindings = bindings.clang_arg(format!("-DFDB_LOG_TAG={}", log_tag));
     bindings = bindings.clang_arg("-DFDB_USING_CUSTOM_MODE=1");
 
     if use_kvdb {

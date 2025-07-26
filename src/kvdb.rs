@@ -20,7 +20,6 @@ use alloc::ffi::CString;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
-use std::path::Path;
 
 /// 键值对状态枚举
 ///
@@ -190,6 +189,7 @@ pub struct KVDB {
     name: CString,
     path: CString,
     inner: fdb_kvdb,                // 底层C库的数据库结构体
+    #[allow(dead_code)]
     storage: Box<Box<dyn Storage>>, // 存储后端实例
 }
 
@@ -348,6 +348,7 @@ impl KVDB {
 
     /// 内部方法：控制数据库读取操作
     #[inline]
+    #[allow(dead_code)]
     fn fdb_kvdb_control_read<T>(&self, cmd: u32, arg: &mut T) {
         fdb_kvdb_control_read(self.handle(), cmd, arg)
     }

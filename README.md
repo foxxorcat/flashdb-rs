@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-flashdb-rs = { version = "0.0.1", features = ["kvdb", "tsdb", "std", "time64"] }
+flashdb-rs = { version = "0.1.0", features = ["kvdb", "tsdb", "std", "time64"] }
 
 # 用于桌面测试
 tempfile = "3.4.0"
@@ -125,7 +125,7 @@ fn main() -> anyhow::Result<()> {
 
     ```toml
     [dependencies]
-    flashdb-rs = { version = "0.0.1", default-features = false, features = ["kvdb", "time64"] }
+    flashdb-rs = { version = "0.1.0", default-features = false, features = ["kvdb", "time64"] }
     ```
 
 2.  **实现 `Storage` Trait**：
