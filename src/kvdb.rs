@@ -110,11 +110,8 @@ impl KVDBBuilder {
         let storage = unsafe { Box::from_raw(storage_boxed_raw) };
 
         let name = CString::new(self.name).unwrap();
-        let path = CString::new(self.path.unwrap_or_default()).unwrap();
 
         let mut kvdb = KVDB {
-            name,
-            path,
             inner: Default::default(), // 初始化内部C结构体
             storage,                   // 存储后端实例
         };
@@ -133,8 +130,8 @@ impl KVDBBuilder {
             // 初始化数据库
             let result = fdb_kvdb_init(
                 db_ptr as *mut fdb_kvdb,
-                kvdb.name.as_ptr(),
-                kvdb.path.as_ptr(),
+                name.into_raw(),
+                core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 storage_boxed_raw as *mut _,
             );
@@ -186,9 +183,7 @@ impl KVDBBuilder {
 ///
 /// 封装了底层键值数据库实现，提供键值对的操作接口
 pub struct KVDB {
-    name: CString,
-    path: CString,
-    inner: fdb_kvdb,                // 底层C库的数据库结构体
+    inner: fdb_kvdb, // 底层C库的数据库结构体
     #[allow(dead_code)]
     storage: Box<Box<dyn Storage>>, // 存储后端实例
 }
@@ -366,7 +361,11 @@ impl RawHandle for KVDB {
 impl Drop for KVDB {
     /// 释放数据库资源
     fn drop(&mut self) {
-        unsafe { fdb_kvdb_deinit(self.handle()) }; // 调用底层C库的销毁函数
+        let handle = self.handle();
+        unsafe {
+            drop(CString::from_raw((*handle).parent.name as *mut _));
+            fdb_kvdb_deinit(handle);
+        };
     }
 }
 

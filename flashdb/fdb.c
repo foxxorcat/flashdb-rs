@@ -32,7 +32,6 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
 {
     FDB_ASSERT(db);
     FDB_ASSERT(name);
-    FDB_ASSERT(path);
 
     if (db->init_ok) {
         return FDB_NO_ERR;
@@ -46,6 +45,7 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
     {
 #if defined(FDB_USING_FILE_MODE)
     case FDB_STORAGE_FILE:
+        FDB_ASSERT(path);
         memset(db->cur_file_sec, FDB_FAILED_ADDR, FDB_FILE_CACHE_TABLE_SIZE * sizeof(db->cur_file_sec[0]));
         /* must set when using file mode */
         FDB_ASSERT(db->sec_size != 0);
@@ -60,6 +60,7 @@ fdb_err_t _fdb_init_ex(fdb_db_t db, const char *name, const char *path, fdb_db_t
 #endif
 #if defined(FDB_USING_FAL_MODE)
     case FDB_STORAGE_FAL:
+        FDB_ASSERT(path);
         size_t block_size;
 
         /* FAL (Flash Abstraction Layer) initialization */
@@ -151,18 +152,21 @@ void _fdb_deinit(fdb_db_t db)
 
 const char *_fdb_db_path(fdb_db_t db)
 {
-    if (db->file_mode) {
-#ifdef FDB_USING_FILE_MODE
+    switch (db->mode)
+    {
+#if defined(FDB_USING_FILE_MODE)
+    case FDB_STORAGE_FILE:
         return db->storage.dir;
-#else
-        return NULL;
 #endif
-    }
-    else {
-#ifdef FDB_USING_FAL_MODE
+#if defined(FDB_USING_FAL_MODE)
+    case FDB_STORAGE_FAL:
         return db->storage.part->name;
-#else
-        return NULL;
 #endif
+#if defined(FDB_USING_CUSTOM_MODE)
+    case FDB_STORAGE_CUSTOM:
+        return "custom";
+#endif
+    default:
+        return NULL;
     }
 }

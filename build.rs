@@ -16,6 +16,7 @@ fn main() {
     let use_64bit_timestamp = cfg!(feature = "time64");
     let use_kvdb = cfg!(feature = "kvdb");
     let use_tsdb = cfg!(feature = "tsdb");
+    let use_log = cfg!(feature = "log");
     let debug_enabled = cfg!(debug_assertions);
 
     // 编译 FlashDB C 库
@@ -47,10 +48,16 @@ fn main() {
         .cargo_warnings(false);
 
     // 应用配置到编译过程
+    // 将日志打印转发到rust处理
+    if use_log {
+        build.define("FDB_PRINT(...)", "fdb_log_printf(__VA_ARGS__)");
+    }
+
+    build.define("FDB_USING_CUSTOM_MODE", "1");
+
     if use_64bit_timestamp {
         build.define("FDB_USING_TIMESTAMP_64BIT", "1");
     }
-    build.define("FDB_USING_CUSTOM_MODE", "1");
 
     if use_kvdb {
         build.define("FDB_USING_KVDB", "1");
@@ -77,10 +84,11 @@ fn main() {
         .derive_debug(true);
 
     // 应用相同的配置到绑定生成过程
+    bindings = bindings.clang_arg("-DFDB_USING_CUSTOM_MODE=1");
+
     if use_64bit_timestamp {
         bindings = bindings.clang_arg("-DFDB_USING_TIMESTAMP_64BIT=1");
     }
-    bindings = bindings.clang_arg("-DFDB_USING_CUSTOM_MODE=1");
 
     if use_kvdb {
         bindings = bindings.clang_arg("-DFDB_USING_KVDB=1");

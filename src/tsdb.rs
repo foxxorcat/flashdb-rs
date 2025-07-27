@@ -104,11 +104,8 @@ impl TSDBBuilder {
         let storage = unsafe { Box::from_raw(storage_boxed_raw) };
 
         let name = CString::new(self.name).unwrap();
-        let path = CString::new(self.path.unwrap_or_default()).unwrap();
 
         let mut tsdb = TSDB {
-            name,
-            path,
             inner: Default::default(),
             storage,
         };
@@ -127,8 +124,8 @@ impl TSDBBuilder {
             // 初始化数据库
             let result = fdb_tsdb_init(
                 db_ptr as fdb_tsdb_t,
-                tsdb.name.as_ptr(),
-                tsdb.path.as_ptr(),
+                name.into_raw(),
+                core::ptr::null_mut(),
                 None,
                 entry_max_len,
                 storage_boxed_raw as *mut _,
@@ -188,8 +185,6 @@ impl TSDBBuilder {
 /// 封装底层C库接口，提供安全的Rust API
 /// --------------------------s
 pub struct TSDB {
-    name: CString,
-    path: CString,
     inner: fdb_tsdb,
     #[allow(dead_code)]
     storage: Box<Box<dyn Storage>>,
@@ -448,9 +443,11 @@ impl RawHandle for TSDB {
 
 impl Drop for TSDB {
     fn drop(&mut self) {
+        let handle = self.handle();
         unsafe {
-            fdb_tsdb_deinit(self.handle());
-        }
+            drop(CString::from_raw((*handle).parent.name as *mut _));
+            fdb_tsdb_deinit(handle);
+        };
     }
 }
 
