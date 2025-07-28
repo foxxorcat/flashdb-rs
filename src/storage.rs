@@ -138,6 +138,7 @@ pub mod std_impl {
             // 刷新缓存中所有的文件句柄
             for (_, file) in self.file_cache.iter_mut() {
                 file.flush()?;
+                file.sync_all()?;
             }
             Ok(())
         }
@@ -196,6 +197,7 @@ pub mod std_impl {
             let buf = vec![0xFF; size];
             file.write_all(&buf)?;
             file.flush()?;
+            file.sync_all()?;
             Ok(())
         }
     }
