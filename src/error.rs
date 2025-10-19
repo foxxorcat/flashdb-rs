@@ -1,4 +1,3 @@
-use alloc::{ffi::NulError, string::String};
 use thiserror::Error;
 
 use crate::{
@@ -6,6 +5,8 @@ use crate::{
     fdb_err_t_FDB_KV_NAME_EXIST, fdb_err_t_FDB_NO_ERR, fdb_err_t_FDB_PART_NOT_FOUND,
     fdb_err_t_FDB_READ_ERR, fdb_err_t_FDB_SAVED_FULL, fdb_err_t_FDB_WRITE_ERR,
 };
+
+type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -33,16 +34,15 @@ pub enum Error {
     InvalidArgument,
     #[error("Key not found")]
     KeyNotFound,
-    #[error("Locking error: {0}")]
-    LockingError(String),
-
+    // #[error("Locking error: {0}")]
+    // LockingError(String),
     #[cfg(feature = "std")]
     #[error("IO error: {0}")]
     IO(std::io::Error),
 }
 
 impl Error {
-    pub fn convert(error: fdb_err_t) -> Result<(), Error> {
+    pub fn convert(error: fdb_err_t) -> Result<()> {
         if error == fdb_err_t_FDB_NO_ERR {
             Ok(())
         } else {
@@ -50,18 +50,12 @@ impl Error {
         }
     }
 
-    pub fn check_and_return<T>(error: fdb_err_t, value: T) -> Result<T, Self> {
+    pub fn check_and_return<T>(error: fdb_err_t, value: T) -> Result<T> {
         if error == fdb_err_t_FDB_NO_ERR {
             Ok(value)
         } else {
             Err(error.into())
         }
-    }
-}
-
-impl From<NulError> for Error {
-    fn from(_: NulError) -> Self {
-        Error::InvalidArgument
     }
 }
 
@@ -104,10 +98,20 @@ impl embedded_io::Error for Error {
             Error::SavedFull => embedded_io::ErrorKind::OutOfMemory,
             Error::InvalidArgument => embedded_io::ErrorKind::InvalidInput,
             Error::UnknownError => embedded_io::ErrorKind::Other,
-            Error::LockingError(_) => embedded_io::ErrorKind::Other,
             Error::Ok => embedded_io::ErrorKind::Other, // 这是一个特殊情况，通常不应作为错误返回
             #[cfg(feature = "std")]
             Error::IO(err) => err.kind().into(),
+        }
+    }
+}
+
+impl embedded_storage::nor_flash::NorFlashError for Error {
+    fn kind(&self) -> embedded_storage::nor_flash::NorFlashErrorKind {
+        match self {
+            // Map specific errors if they correspond to alignment or out-of-bounds issues
+            Error::InvalidArgument => embedded_storage::nor_flash::NorFlashErrorKind::NotAligned,
+            // Most other errors from this library can be categorized as 'Other'
+            _ => embedded_storage::nor_flash::NorFlashErrorKind::Other,
         }
     }
 }

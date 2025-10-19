@@ -1,8 +1,49 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
-    let target = env::var("TARGET").expect("TARGET environment variable not set");
+    let target = env::var("TARGET").unwrap();
+
+    let mut build = cc::Build::new();
+    let mut bindings = bindgen::Builder::default();
+
+    let compiler = build.get_compiler();    
+    let compiler_path = compiler.path();
+
+    match Command::new(compiler_path).arg("-print-sysroot").output() {
+        Ok(output) => {
+            if output.status.success() {
+                let sysroot_path = String::from_utf8(output.stdout)
+                    .expect("Sysroot path is not valid UTF-8")
+                    .trim()
+                    .to_string();
+
+                if !sysroot_path.is_empty() {
+                    println!(
+                        "cargo:info=Auto-detected sysroot for target {}: {}",
+                        target, sysroot_path
+                    );
+                    let sysroot_arg = format!("--sysroot={}", sysroot_path);
+
+                    build.flag(&sysroot_arg);
+                    bindings = bindings.clang_arg(&sysroot_arg);
+                }
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                println!(
+                    "cargo:warning=Compiler at {:?} failed to report sysroot. Stderr: {}",
+                    compiler_path, stderr
+                );
+            }
+        }
+        Err(e) => {
+            println!(
+                "cargo:warning=Failed to execute compiler at {:?} to get sysroot. Error: {}",
+                compiler_path, e
+            );
+        }
+    }
 
     let srcs = [
         "flashdb/fdb.c",
@@ -18,9 +59,6 @@ fn main() {
     let use_tsdb = cfg!(feature = "tsdb");
     let use_log = cfg!(feature = "log");
     let debug_enabled = cfg!(debug_assertions);
-
-    // 编译 FlashDB C 库
-    let mut build = cc::Build::new();
 
     {
         let linker = match target.as_str() {
@@ -43,6 +81,7 @@ fn main() {
     }
 
     build
+        .flag("-std=c99")
         .files(&srcs)
         .include("flashdb/inc")
         .cargo_warnings(false);
@@ -73,13 +112,14 @@ fn main() {
 
     println!("cargo:rerun-if-changed=flashdb/inc/flashdb.h");
     // 生成 Rust 绑定
-    let mut bindings = bindgen::Builder::default()
+    bindings = bindings
+        .use_core()
         .header("flashdb/inc/flashdb.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .allowlist_type("fdb_.*")
         .allowlist_function("fdb_.*")
         .allowlist_var("FDB_.*")
-        .use_core()
+        .clang_arg("-std=c99")
         .derive_default(true)
         .derive_debug(true);
 

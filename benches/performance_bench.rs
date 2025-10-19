@@ -1,23 +1,30 @@
-// benches/performance_bench.rs
-
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
-use flashdb_rs::{kvdb::KVDBBuilder, tsdb::TSDBBuilder};
+use flashdb_rs::{KVDB, TSDB};
 use std::path::Path;
 use tempfile::tempdir;
 
 // --- 辅助函数 ---
 
-fn setup_kvdb(dir: &Path) -> flashdb_rs::kvdb::KVDB {
-    KVDBBuilder::file("kv_bench_db", dir.to_str().unwrap(), 10 * 1024 * 1024) // 10MB 数据库
-        .with_sec_size(4096)
-        .open()
-        .unwrap()
+fn setup_kvdb(dir: &Path) -> Box<KVDB<flashdb_rs::StdStorage>> {
+    KVDB::new_file(
+        "kv_bench_db",
+        dir.to_str().unwrap(),
+        4096,
+        10 * 1024 * 1024, // 10MB 数据库
+        None,
+    )
+    .unwrap()
 }
 
-fn setup_tsdb(dir: &Path) -> flashdb_rs::tsdb::TSDB {
-    TSDBBuilder::file("ts_bench_db", dir.to_str().unwrap(), 10 * 1024 * 1024, 1024)
-        .open()
-        .unwrap()
+fn setup_tsdb(dir: &Path) -> Box<TSDB<flashdb_rs::StdStorage>> {
+    TSDB::new_file(
+        "ts_bench_db",
+        dir.to_str().unwrap(),
+        4096,
+        10 * 1024 * 1024,
+        1024,
+    )
+    .unwrap()
 }
 
 // --- KVDB 性能测试 ---
@@ -31,8 +38,9 @@ fn kvdb_set_benchmark(c: &mut Criterion) {
     c.bench_function("kvdb_set_new", |b| {
         let mut i = 0;
         b.iter(|| {
-            let key = format!("key_{}", i);
-            db.set(&key, &value).unwrap();
+            let key_str = format!("key_{}\0", i);
+            let key = std::ffi::CStr::from_bytes_with_nul(key_str.as_bytes()).unwrap();
+            db.set(key, &value).unwrap();
             i += 1;
         })
     });
@@ -43,7 +51,7 @@ fn kvdb_get_benchmark(c: &mut Criterion) {
     let temp_dir = tempdir().unwrap();
     let mut db = setup_kvdb(temp_dir.path());
     let value = vec![0u8; 256];
-    let key = "persistent_key";
+    let key = std::ffi::CStr::from_bytes_with_nul(b"persistent_key\0").unwrap();
     db.set(key, &value).unwrap();
 
     c.bench_function("kvdb_get", |b| {
@@ -59,7 +67,7 @@ fn kvdb_overwrite_benchmark(c: &mut Criterion) {
     let mut db = setup_kvdb(temp_dir.path());
     let initial_value = vec![0u8; 256];
     let overwrite_value = vec![1u8; 256];
-    let key = "overwrite_key";
+    let key = std::ffi::CStr::from_bytes_with_nul(b"overwrite_key\0").unwrap();
     db.set(key, &initial_value).unwrap();
 
     c.bench_function("kvdb_set_overwrite", |b| {
@@ -71,7 +79,7 @@ fn kvdb_overwrite_benchmark(c: &mut Criterion) {
 
 // --- TSDB 性能测试 ---
 
-/// **[已修复]** 测试向一个全新的数据库追加单条TSL的性能。
+/// 测试向一个全新的数据库追加单条TSL的性能。
 fn tsdb_append_benchmark(c: &mut Criterion) {
     let log_data = vec![0u8; 256];
 
