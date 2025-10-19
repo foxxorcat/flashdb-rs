@@ -8,7 +8,7 @@ fn main() {
     let mut build = cc::Build::new();
     let mut bindings = bindgen::Builder::default();
 
-    let compiler = build.get_compiler();    
+    let compiler = build.get_compiler();
     let compiler_path = compiler.path();
 
     match Command::new(compiler_path).arg("-print-sysroot").output() {
@@ -45,13 +45,11 @@ fn main() {
         }
     }
 
-    let srcs = [
+    let mut srcs = vec![
         "flashdb/fdb.c",
-        "flashdb/fdb_file.c",
         "flashdb/fdb_kvdb.c",
         "flashdb/fdb_tsdb.c",
         "flashdb/fdb_utils.c",
-        "flashdb/shim.c",
     ];
 
     let use_64bit_timestamp = cfg!(feature = "time64");
@@ -80,17 +78,21 @@ fn main() {
         }
     }
 
+    // 根据 log 特性决定日志实现
+    if use_log {
+        // 编译 shim.c 并重定向 FDB_PRINT 到 Rust
+        srcs.push("flashdb/shim.c");
+        build.define("FDB_PRINT(...)", "fdb_log_printf(__VA_ARGS__)");
+    } else {
+        // 不启用 log 时，将 FDB_PRINT 定义为空操作，移除 stdio 依赖
+        build.define("FDB_PRINT(...)", "((void)0)");
+    }
+
     build
         .flag("-std=c99")
         .files(&srcs)
         .include("flashdb/inc")
         .cargo_warnings(false);
-
-    // 应用配置到编译过程
-    // 将日志打印转发到rust处理
-    if use_log {
-        build.define("FDB_PRINT(...)", "fdb_log_printf(__VA_ARGS__)");
-    }
 
     build.define("FDB_USING_CUSTOM_MODE", "1");
 
@@ -138,6 +140,9 @@ fn main() {
     }
     if debug_enabled {
         bindings = bindings.clang_arg("-DFDB_DEBUG_ENABLE=1");
+    }
+    if !use_log {
+        bindings = bindings.clang_arg("-DFDB_PRINT(...)=");
     }
 
     let bindings = bindings.generate().expect("Unable to generate bindings");
