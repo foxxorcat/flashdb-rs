@@ -39,8 +39,7 @@ fn kvdb_set_benchmark(c: &mut Criterion) {
         let mut i = 0;
         b.iter(|| {
             let key_str = format!("key_{}\0", i);
-            let key = std::ffi::CStr::from_bytes_with_nul(key_str.as_bytes()).unwrap();
-            db.set(key, &value).unwrap();
+            db.set(&key_str, &value).unwrap();
             i += 1;
         })
     });
@@ -51,7 +50,7 @@ fn kvdb_get_benchmark(c: &mut Criterion) {
     let temp_dir = tempdir().unwrap();
     let mut db = setup_kvdb(temp_dir.path());
     let value = vec![0u8; 256];
-    let key = std::ffi::CStr::from_bytes_with_nul(b"persistent_key\0").unwrap();
+    let key = "persistent_key";
     db.set(key, &value).unwrap();
 
     c.bench_function("kvdb_get", |b| {
@@ -67,7 +66,7 @@ fn kvdb_overwrite_benchmark(c: &mut Criterion) {
     let mut db = setup_kvdb(temp_dir.path());
     let initial_value = vec![0u8; 256];
     let overwrite_value = vec![1u8; 256];
-    let key = std::ffi::CStr::from_bytes_with_nul(b"overwrite_key\0").unwrap();
+    let key = "overwrite_key";
     db.set(key, &initial_value).unwrap();
 
     c.bench_function("kvdb_set_overwrite", |b| {

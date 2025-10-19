@@ -19,28 +19,33 @@ fn test_kvdb_with_default_kvs() -> anyhow::Result<()> {
     let path = temp_dir.path().to_str().unwrap();
 
     // 1. 使用默认 KVs 初始化一个新的数据库
-    let mut db = KVDB::new_file("default_db", path, 4096, 128 * 1024, Some(&MY_DEFAULT_KVS.0))?;
+    let mut db = KVDB::new_file(
+        "default_db",
+        path,
+        4096,
+        128 * 1024,
+        Some(&MY_DEFAULT_KVS.0),
+    )?;
 
     // 2. 验证默认值是否已成功写入
-    let ver = db.get(CStr::from_bytes_with_nul(b"version\0")?)?.unwrap();
+    let ver = db.get("version")?.unwrap();
     assert_eq!(ver, b"1.0.0");
 
-    let count = db.get(CStr::from_bytes_with_nul(b"boot_count\0")?)?.unwrap();
+    let count = db.get("boot_count")?.unwrap();
     assert_eq!(count, b"0");
 
     // 3. 修改一个默认值并验证
-    db.set(CStr::from_bytes_with_nul(b"boot_count\0")?, b"1")?;
-    let new_count = db.get(CStr::from_bytes_with_nul(b"boot_count\0")?)?.unwrap();
+    db.set("boot_count", b"1")?;
+    let new_count = db.get("boot_count")?.unwrap();
     assert_eq!(new_count, b"1");
 
     // 4. 测试 reset 功能是否能恢复默认值
     db.reset()?;
-    let reset_count = db.get(CStr::from_bytes_with_nul(b"boot_count\0")?)?.unwrap();
+    let reset_count = db.get("boot_count")?.unwrap();
     assert_eq!(reset_count, b"0", "reset 应该能恢复默认值");
 
     Ok(())
 }
-
 
 #[test]
 fn test_kvdb_basic_operations() -> anyhow::Result<()> {
@@ -50,11 +55,11 @@ fn test_kvdb_basic_operations() -> anyhow::Result<()> {
 
     let mut db = KVDB::new_file(db_name, path, 4096, 128 * 4096, None)?;
 
-    let key1 = CStr::from_bytes_with_nul(b"key1\0")?;
+    let key1 = "key1";
     let value1 = b"hello";
     db.set(key1, value1)?;
 
-    let key2 = CStr::from_bytes_with_nul(b"key2\0")?;
+    let key2 = "key2";
     let value2 = b"world";
     db.set(key2, value2)?;
 
@@ -76,9 +81,9 @@ fn test_kvdb_iterator() -> anyhow::Result<()> {
     let path = temp_dir.path().to_str().unwrap();
     let mut db = KVDB::new_file("iter_db", path, 4096, 128 * 1024, None)?;
 
-    db.set(CStr::from_bytes_with_nul(b"a\0")?, b"1")?;
-    db.set(CStr::from_bytes_with_nul(b"b\0")?, b"2")?;
-    db.set(CStr::from_bytes_with_nul(b"c\0")?, b"3")?;
+    db.set("a", b"1")?;
+    db.set("b", b"2")?;
+    db.set("c", b"3")?;
 
     let mut found_keys = std::collections::HashSet::new();
     let mut total_len = 0;
@@ -98,13 +103,12 @@ fn test_kvdb_iterator() -> anyhow::Result<()> {
     Ok(())
 }
 
-
 #[test]
 fn test_kvdb_reader_seek() -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let path = temp_dir.path().to_str().unwrap();
     let mut db = KVDB::new_file("seek_test", path, 4096, 128 * 4096, None)?;
-    let key = CStr::from_bytes_with_nul(b"large_data\0")?;
+    let key = "large_data";
     let value = (0..1024).map(|i| (i % 256) as u8).collect::<Vec<_>>();
     db.set(key, &value)?;
 
@@ -142,42 +146,22 @@ fn test_kvdb_garbage_collection() -> anyhow::Result<()> {
 
     for i in 0..3 {
         let key_str = format!("key_sector1_{}\0", i);
-        let key = CStr::from_bytes_with_nul(key_str.as_bytes())?;
-        db.set(key, &value)?;
+        db.set(&key_str, &value)?;
     }
-    db.delete(CStr::from_bytes_with_nul(b"key_sector1_0\0")?)?;
-    db.set(
-        CStr::from_bytes_with_nul(b"key_sector1_1\0")?,
-        b"new_small_value",
-    )?;
+    db.delete("key_sector1_0")?;
+    db.set("key_sector1_1", b"new_small_value")?;
 
     for i in 0..3 {
         let key_str = format!("key_sector2_{}\0", i);
-        let key = CStr::from_bytes_with_nul(key_str.as_bytes())?;
-        db.set(key, &value)?;
+        db.set(&key_str, &value)?;
     }
 
-    db.set(CStr::from_bytes_with_nul(b"trigger_gc\0")?, &value)?;
+    db.set("trigger_gc", &value)?;
 
-    assert!(
-        db.get(CStr::from_bytes_with_nul(b"key_sector1_0\0")?)?
-            .is_none()
-    );
-    assert_eq!(
-        db.get(CStr::from_bytes_with_nul(b"key_sector1_1\0")?)?
-            .unwrap(),
-        b"new_small_value"
-    );
-    assert_eq!(
-        db.get(CStr::from_bytes_with_nul(b"key_sector1_2\0")?)?
-            .unwrap(),
-        value
-    );
-    assert_eq!(
-        db.get(CStr::from_bytes_with_nul(b"trigger_gc\0")?)?
-            .unwrap(),
-        value
-    );
+    assert!(db.get("key_sector1_0")?.is_none());
+    assert_eq!(db.get("key_sector1_1")?.unwrap(), b"new_small_value");
+    assert_eq!(db.get("key_sector1_2")?.unwrap(), value);
+    assert_eq!(db.get("trigger_gc")?.unwrap(), value);
 
     Ok(())
 }
