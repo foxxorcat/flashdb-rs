@@ -14,7 +14,6 @@
  */
 
 #include <inttypes.h>
-#include <string.h>
 #include <flashdb.h>
 #include <fdb_low_lvl.h>
 

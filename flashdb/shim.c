@@ -1,7 +1,5 @@
 #include <stdarg.h>
 #include <stdio.h>
-#include <string.h>
-
 
 // 声明 Rust 函数（在 Rust 中实现）
 extern void rust_log(const char *message);
