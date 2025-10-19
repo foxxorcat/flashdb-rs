@@ -1,9 +1,72 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+// 回退函数：当 `-print-sysroot` 失败时，通过解析编译器输出来获取头文件搜索路径
+fn get_compiler_include_paths(compiler_path: &Path) -> Result<Vec<String>, std::io::Error> {
+    println!(
+        "cargo:info=Sysroot 自动检测失败，回退至解析编译器 include 路径模式。"
+    );
+    // 构造一个命令，让编译器预处理一个空输入，并打印出头文件搜索路径
+    // `arm-none-eabi-gcc -E -Wp,-v -xc /dev/null`
+    // 在 Windows 上，`/dev/null` 应该替换为 `NUL`
+    let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
+
+    // 执行命令，捕获编译器的 stderr 输出
+    let output = Command::new(compiler_path)
+        .arg("-E")
+        .arg("-Wp,-v")
+        .arg("-xc")
+        .arg(null_device)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!(
+            "cargo:warning=从编译器获取 include 路径失败。 Stderr:\n{}",
+            stderr
+        );
+        // 返回空 Vec，让后续流程决定是否因缺少路径而构建失败
+        return Ok(Vec::new());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut clang_args = Vec::new();
+    let mut in_search_list = false;
+
+    // 解析 stderr，提取 #include <...> 搜索路径
+    for line in stderr.lines() {
+        if line.starts_with("#include <...> search starts here:") {
+            in_search_list = true;
+            continue;
+        }
+        if line.starts_with("End of search list.") {
+            break;
+        }
+        if in_search_list {
+            // 将路径格式化为 clang 的 -I 参数
+            clang_args.push(format!("-I{}", line.trim()));
+        }
+    }
+
+    if clang_args.is_empty() {
+        println!(
+            "cargo:warning=无法自动确定编译器的 include 路径。 Stderr:\n{}",
+            stderr
+        );
+    } else {
+        println!(
+            "cargo:info=成功解析到编译器 include 路径: {:?}",
+            clang_args
+        );
+    }
+
+    Ok(clang_args)
+}
 
 fn main() {
     let target = env::var("TARGET").unwrap();
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let mut build = cc::Build::new();
     let mut bindings = bindgen::Builder::default();
@@ -11,39 +74,51 @@ fn main() {
     let compiler = build.get_compiler();
     let compiler_path = compiler.path();
 
-    match Command::new(compiler_path).arg("-print-sysroot").output() {
-        Ok(output) => {
-            if output.status.success() {
-                let sysroot_path = String::from_utf8(output.stdout)
-                    .expect("Sysroot path is not valid UTF-8")
-                    .trim()
-                    .to_string();
+    // --- 优化的头文件路径检测逻辑 ---
 
-                if !sysroot_path.is_empty() {
-                    println!(
-                        "cargo:info=Auto-detected sysroot for target {}: {}",
-                        target, sysroot_path
-                    );
-                    let sysroot_arg = format!("--sysroot={}", sysroot_path);
+    // 方案一：尝试直接获取 sysroot
+    let sysroot_output = Command::new(compiler_path).arg("-print-sysroot").output();
 
-                    build.flag(&sysroot_arg);
-                    bindings = bindings.clang_arg(&sysroot_arg);
-                }
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut found_headers = false;
+    match sysroot_output {
+        Ok(output) if output.status.success() => {
+            let sysroot_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !sysroot_path.is_empty() {
                 println!(
-                    "cargo:warning=Compiler at {:?} failed to report sysroot. Stderr: {}",
-                    compiler_path, stderr
+                    "cargo:info=为目标 {} 自动检测到 sysroot: {}",
+                    target, sysroot_path
+                );
+                let sysroot_arg = format!("--sysroot={}", sysroot_path);
+
+                // 同时应用到 cc::Build 和 bindgen::Builder
+                build.flag(&sysroot_arg);
+                bindings = bindings.clang_arg(&sysroot_arg);
+                found_headers = true;
+            }
+        }
+        _ => { // 如果失败，则静默处理，后续将进入回退方案
+        }
+    }
+
+    // 方案二：如果 sysroot 获取失败，则回退到解析 include 路径的方案
+    if !found_headers {
+        match get_compiler_include_paths(compiler_path) {
+            Ok(include_args) => {
+                for arg in include_args {
+                    // 同样，同时应用到 cc::Build 和 bindgen::Builder
+                    build.flag(arg.as_str());
+                    bindings = bindings.clang_arg(arg);
+                }
+            }
+            Err(e) => {
+                println!(
+                    "cargo:warning=执行编译器以获取 include 路径失败。错误: {}",
+                    e
                 );
             }
         }
-        Err(e) => {
-            println!(
-                "cargo:warning=Failed to execute compiler at {:?} to get sysroot. Error: {}",
-                compiler_path, e
-            );
-        }
     }
+    // --- 头文件路径检测逻辑结束 ---
 
     let mut srcs = vec![
         "flashdb/fdb.c",
@@ -60,13 +135,13 @@ fn main() {
 
     {
         let linker = match target.as_str() {
-            "xtensa-esp32-espidf" =>Some("xtensa-esp32-elf-gcc"),
-            "xtensa-esp32s2-espidf" =>Some("xtensa-esp32s2-elf-gcc"),
+            "xtensa-esp32-espidf" => Some("xtensa-esp32-elf-gcc"),
+            "xtensa-esp32s2-espidf" => Some("xtensa-esp32s2-elf-gcc"),
             "xtensa-esp32s3-espidf" => Some("xtensa-esp32s3-elf-gcc"),
 
             // cc 中有相关映射，应该可以不设置
             // Keep C3 as the first in the list, so it is picked up by default; as C2 does not work for older ESP IDFs
-            "riscv32imc-esp-espidf"|
+            "riscv32imc-esp-espidf" |
             // Keep C6 at the first in the list, so it is picked up by default; as H2 does not have a Wifi
             "riscv32imac-esp-espidf" | "riscv32imafc-esp-espidf" => Some("riscv32-esp-elf-gcc"),
             _ => None
@@ -148,7 +223,6 @@ fn main() {
     let bindings = bindings.generate().expect("Unable to generate bindings");
 
     // 输出绑定文件
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
