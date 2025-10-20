@@ -74,8 +74,6 @@ fn main() {
     let compiler = build.get_compiler();
     let compiler_path = compiler.path();
 
-    // --- 优化的头文件路径检测逻辑 ---
-
     // 方案一：尝试直接获取 sysroot
     let sysroot_output = Command::new(compiler_path).arg("-print-sysroot").output();
 
@@ -133,6 +131,31 @@ fn main() {
     let use_log = cfg!(feature = "log");
     let debug_enabled = cfg!(debug_assertions);
 
+    // --- 写入粒度 (FDB_WRITE_GRAN) 配置 ---
+    let mut gran_features = Vec::new();
+    let mut gran_value = "1"; // 初始化为空
+
+    if cfg!(feature = "gran-1") { gran_features.push("gran-1"); gran_value = "1"; }
+    if cfg!(feature = "gran-8") { gran_features.push("gran-8"); gran_value = "8"; }
+    if cfg!(feature = "gran-32") { gran_features.push("gran-32"); gran_value = "32"; }
+    if cfg!(feature = "gran-64") { gran_features.push("gran-64"); gran_value = "64"; }
+    if cfg!(feature = "gran-128") { gran_features.push("gran-128"); gran_value = "128"; }
+
+    // 互斥检查：确保只选择了一个 gran 特性
+    if gran_features.len() > 1 {
+        panic!("错误：只能选择一个 'gran-x' 特性，但检测到多个: {:?}", gran_features);
+    }
+
+    // 强制检查：必须选择一个 gran 特性
+    if gran_features.is_empty() {
+        println!("cargo:warning=未指定 'gran-x' 特性，将默认使用 FDB_WRITE_GRAN=1 (适用于 NOR Flash)。如果使用 STM32 内部 Flash，这可能会导致错误。");
+    }
+
+    // 如果检查通过，gran_value 必定已被正确设置
+    println!("cargo:info=已选择 FlashDB 写入粒度: {} bits", gran_value);
+    build.define("FDB_WRITE_GRAN", Some(gran_value));
+    bindings = bindings.clang_arg(format!("-DFDB_WRITE_GRAN={}", gran_value));
+
     {
         let linker = match target.as_str() {
             "xtensa-esp32-espidf" => Some("xtensa-esp32-elf-gcc"),
@@ -164,7 +187,6 @@ fn main() {
     }
 
     build
-        .flag("-std=c99")
         .files(&srcs)
         .include("flashdb/inc")
         .cargo_warnings(false);
@@ -196,7 +218,6 @@ fn main() {
         .allowlist_type("fdb_.*")
         .allowlist_function("fdb_.*")
         .allowlist_var("FDB_.*")
-        .clang_arg("-std=c99")
         .derive_default(true)
         .derive_debug(true);
 

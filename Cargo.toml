@@ -28,13 +28,24 @@ lru = { version = "0.12.3", optional = true }
 thiserror = { version = "2.0.12", default-features = false }
 
 [features]
-default = ["kvdb", "tsdb", "log", "time64", "std"]
+default = ["kvdb", "tsdb", "log", "time64", "std", "gran-1"]
 kvdb = []
 tsdb = []
 time64 = []
 std = ["embedded-io/std", "dep:lru", "alloc"]
 alloc = []
 log = ["dep:log"]
+
+# NOR Flash (或行为类似的外部 Flash)
+gran-1 = []
+# STM32F2/F4 系列的部分型号
+gran-8 = []
+#STM32F1/L4/G 系列
+gran-32 = []
+#STM32F7/H7/U5 及部分 F4 系列
+gran-64 = []
+#STM32H5 系列
+gran-128 = []
 
 [[bench]]
 name = "performance_bench"
