@@ -1,13 +1,15 @@
 [package]
 authors = ["foxxorcat"]
-description = "Driver for the registers on a TLV320AIC3204 I²C Audio CODEC"
+description = "A safe, high-performance Rust binding for FlashDB, an ultra-lightweight database for embedded products. Provides KVDB and TSDB features with a flexible storage backend."
+keywords = ["database", "embedded", "kv", "timeseries", "no_std"]
+categories = ["embedded", "database", "no-std"]
 edition = "2021"
 homepage = "https://github.com/foxxorcat/flashdb-rs"
 license = "Apache-2.0"
 name = "flashdb-rs"
 readme = "README.md"
 repository = "https://github.com/foxxorcat/flashdb-rs.git"
-version = "0.2.0"
+version = "0.2.1"
 
 [build-dependencies]
 cc = "1.2.26"

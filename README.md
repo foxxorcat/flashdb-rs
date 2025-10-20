@@ -30,7 +30,7 @@
 
 ```toml
 [dependencies]
-flashdb-rs = { version = "0.1.0", features = ["kvdb", "tsdb", "std", "time64"] }
+flashdb-rs = { version = "0.2.1", features = ["kvdb", "tsdb", "std", "time64"] }
 
 # 用于桌面测试
 anyhow = "1.0"
@@ -59,16 +59,16 @@ fn main() -> anyhow::Result<()> {
         None,       // default_kvs
     )?;
 
-    // 3. 设置键值对 (键必须是 C 字符串)
-    let key = CStr::from_bytes_with_nul(b"boot_count\0")?;
+    // 3. 设置键值对
+    let key = "boot_count"; // 直接使用 &str，更简洁
     let value = b"10";
     db.set(key, value)?;
-    println!("Set '{}' = '{}'", key.to_str()?, std::str::from_utf8(value)?);
+    println!("Set '{}' = '{}'", key, std::str::from_utf8(value)?);
 
     // 4. 获取键值对
     if let Some(retrieved_value) = db.get(key)? {
         let value_str = std::str::from_utf8(&retrieved_value)?;
-        println!("Get '{}' = '{}'", key.to_str()?, value_str);
+        println!("Get '{}' = '{}'", key, value_str);
         assert_eq!(value_str.as_bytes(), value);
     }
 
@@ -140,7 +140,7 @@ fn main() -> anyhow::Result<()> {
 
     ```toml
     [dependencies]
-    flashdb-rs = { version = "0.1.0", default-features = false, features = ["kvdb", "time64"] }
+    flashdb-rs = { version = "0.2.1", default-features = false, features = ["kvdb", "time64"] }
     ```
 
 2.  **实现 `NorFlash` Trait**：

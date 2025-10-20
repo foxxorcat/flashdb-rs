@@ -68,8 +68,11 @@ impl KVDB<crate::storage::StdStorage> {
 impl<S: NorFlash> KVDB<S> {
     /// 创建一个未初始化的 KVDB 实例。
     ///
-    /// # Arguments
-    /// * `storage` - 一个实现了 `NorFlash` trait 的存储实例。
+    /// 在 `no_std` 环境下，这是创建数据库实例的主要方式。
+    /// 实例创建后，必须调用 `.init()` 方法才能使用。
+    ///
+    /// # 参数
+    /// * `storage` - 一个实现了 `embedded_storage::nor_flash::NorFlash` trait 的存储后端实例。
     pub fn new(storage: S) -> Self {
         Self {
             inner: Default::default(),

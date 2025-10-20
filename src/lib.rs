@@ -4,6 +4,8 @@
 #![allow(non_snake_case)]
 #![allow(clippy::all)]
 
+#![doc = include_str!("../README.md")]
+
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
